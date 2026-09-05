@@ -1,19 +1,20 @@
 /**
  * @type {import('node-pg-migrate').ColumnDefinitions | undefined}
  */
-export const shorthands = undefined;
+exports.shorthands = undefined;
 
 /**
  * @param pgm {import('node-pg-migrate').MigrationBuilder}
  * @param run {() => void | undefined}
  * @returns {Promise<void> | void}
  */
-export const up = (pgm) => {
-    pgm.createTable('matches', {
+exports.up = (pgm) => {
+    pgm.createTable('answer_choices', {
         id: 'id',
-        player1Id: {type: 'integer', notNull: true, references: 'users'},
-        player2Id: {type: 'integer', notNull: true, references: 'users'},
-        winnerId: {type: 'integer', references: 'users'},
+        questionId: {type: 'integer', notNull: true, references: 'questions'},
+        choiceText: {type: 'text', notNull: true},
+        imageUrl: {type: 'text'},
+        isCorrect: {type: 'boolean', notNull: true, default: false},
         createdAt: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
     })
 };
@@ -23,6 +24,6 @@ export const up = (pgm) => {
  * @param run {() => void | undefined}
  * @returns {Promise<void> | void}
  */
-export const down = (pgm) => {
-    pgm.dropTable('matches');
+exports.down = (pgm) => {
+    pgm.dropTable('answer_choices');
 };

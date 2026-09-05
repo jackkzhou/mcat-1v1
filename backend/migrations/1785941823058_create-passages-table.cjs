@@ -1,19 +1,22 @@
 /**
  * @type {import('node-pg-migrate').ColumnDefinitions | undefined}
  */
-export const shorthands = undefined;
+exports.shorthands = undefined;
 
 /**
  * @param pgm {import('node-pg-migrate').MigrationBuilder}
  * @param run {() => void | undefined}
  * @returns {Promise<void> | void}
  */
-export const up = (pgm) => {
-    pgm.createTable('questions',{
+exports.up = (pgm) => {
+    pgm.createTable('passages', {
         id: 'id',
-        passageId: {type: 'integer', notNull: true, references: 'passages'},
-        questionText: {type: 'text', notNull: true},
-        imageUrl: {type: 'text'},
+        passageText: {type: 'text', notNull: true},
+        passageImageUrl: {type: 'text'},
+        passageImageUrl2: {type: 'text'},
+        passageImageUrl3: {type: 'text'},
+        passageImageUrl4: {type: 'text'},
+        category: {type: 'text', notNull: true},
         createdAt: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
     })
 };
@@ -23,6 +26,6 @@ export const up = (pgm) => {
  * @param run {() => void | undefined}
  * @returns {Promise<void> | void}
  */
-export const down = (pgm) => {
-    pgm.dropTable('questions');
+exports.down = (pgm) => {
+    pgm.dropTable('passages');
 };

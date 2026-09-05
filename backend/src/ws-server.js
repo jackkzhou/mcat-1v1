@@ -23,9 +23,11 @@ wss.on('connection', (socket) => {
 
   socket.on('error', console.error);
 
-  socket.on('close', () => {                           // ← added block
-    clients.delete(id);
-    console.log(`client ${id} disconnected (${clients.size} total)`);
+  socket.on('close', () => {
+  clients.delete(id);
+  const i = waiting.indexOf(id);
+  if (i !== -1) waiting.splice(i, 1);
+  console.log(`client ${id} disconnected (${clients.size} total)`);
   });
 
   socket.on('message', (message) => {
@@ -48,16 +50,48 @@ wss.on('connection', (socket) => {
 });
 
 
-function handleQueue(socket){
+function handleQueue(socket) {
+  if (socket.matchId) return;   
   if (waiting.includes(socket.id)) return;
   waiting.push(socket.id);
-    if(waiting.length < 2)
-    {
-      socket.send(JSON.stringify(type: 'queued'));
-      return;
-    }
-      if(waiting.length >= 2)
-      {
-        matches.set(match_id, )
-      }
-}
+
+  if (waiting.length < 2) {
+    socket.send(JSON.stringify({ type: 'queued' }));
+    return;
+  }
+
+  const id1 = waiting.shift();
+  const id2 = waiting.shift();
+
+  const p1 = clients.get(id1);
+  const p2 = clients.get(id2);
+
+  const p1Ok = p1 && p1.readyState === WebSocket.OPEN;
+  const p2Ok = p2 && p2.readyState === WebSocket.OPEN;
+
+  if (!p1Ok || !p2Ok) {
+    if (p1Ok) waiting.unshift(id1);
+    if (p2Ok) waiting.unshift(id2);
+    return;
+  }
+
+  const matchId = randomUUID();
+  matches.set(matchId, { player1: id1, player2: id2 });
+
+  p1.matchId = matchId;        // ← add
+  p2.matchId = matchId;        // ← add
+
+  p1.send(JSON.stringify({ type: 'match_found', matchId, opponent: id2 }));
+  p2.send(JSON.stringify({ type: 'match_found', matchId, opponent: id1 }));
+
+  console.log(`match ${matchId}: ${id1} vs ${id2}`);
+
+  question = pool.query('SELECT q.id, q.question_text, p.passage_text
+                        FROM questions q
+                        JOIN passages p ON q.passage_id = p.id
+                        ORDER BY random()
+                        LIMIT 1')
+  answers = pool.query(SELECT id, choice_text, is_correct
+                        FROM answer_choices
+                        WHERE question_id = $1)
+  
