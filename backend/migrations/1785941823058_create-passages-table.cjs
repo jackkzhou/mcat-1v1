@@ -10,14 +10,14 @@ exports.shorthands = undefined;
  */
 exports.up = (pgm) => {
     pgm.createTable('passages', {
-        id: 'id',
-        passageText: {type: 'text', notNull: true},
-        passageImageUrl: {type: 'text'},
-        passageImageUrl2: {type: 'text'},
-        passageImageUrl3: {type: 'text'},
-        passageImageUrl4: {type: 'text'},
+                id: 'id',
+        passage_text: {type: 'text', notNull: true},
+        passage_image_url: {type: 'text'},
+        passage_image_url_2: {type: 'text'},
+        passage_image_url_3: {type: 'text'},
+        passage_image_url_4: {type: 'text'},
         category: {type: 'text', notNull: true},
-        createdAt: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
+        created_at: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
     })
 };
 

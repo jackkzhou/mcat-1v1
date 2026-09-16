@@ -11,10 +11,10 @@ exports.shorthands = undefined;
 exports.up = (pgm) => {
     pgm.createTable('questions',{
         id: 'id',
-        passageId: {type: 'integer', notNull: true, references: 'passages'},
-        questionText: {type: 'text', notNull: true},
-        imageUrl: {type: 'text'},
-        createdAt: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
+        passage_id: {type: 'integer', notNull: true, references: 'passages'},
+        question_text: {type: 'text', notNull: true},
+        image_url: {type: 'text'},
+        created_at: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
     })
 };
 

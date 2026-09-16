@@ -11,9 +11,11 @@ exports.shorthands = undefined;
 exports.up = (pgm) => {
     pgm.createTable('users', {
     id: 'id',
-    username: {type: 'text', notNull: true},
+    username: {type: 'text', notNull: true, unique: true},
     rating: {type: 'integer', notNull: true, default: 1000},
-    
+    email: {type: 'text', notNull: true, unique: true},
+    password_hash: {type: 'text', notNull: true},
+    created_at: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')}
     })
 };
 

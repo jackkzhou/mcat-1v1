@@ -95,15 +95,6 @@ function drainQueue() {
 
 async function startMatch([id1, p1, id2, p2]) {
   const matchId = randomUUID();
-  matches.set(matchId, { player1: id1, player2: id2 });
-
-  p1.matchId = matchId;
-  p2.matchId = matchId;
-
-  p1.send(JSON.stringify({ type: 'match_found', matchId, opponent: id2 }));
-  p2.send(JSON.stringify({ type: 'match_found', matchId, opponent: id1 }));
-
-  console.log(`match ${matchId}: ${id1} vs ${id2}`);
 
   const question = await pool.query(`
     SELECT q.id, q.question_text, p.passage_text
@@ -118,6 +109,22 @@ async function startMatch([id1, p1, id2, p2]) {
     WHERE question_id = $1`,
     [question.rows[0].id]
   );
+
+  if (p1.readyState !== WebSocket.OPEN || p2.readyState !== WebSocket.OPEN) {
+    if (p1.readyState === WebSocket.OPEN) waiting.unshift(id1);
+    if (p2.readyState === WebSocket.OPEN) waiting.unshift(id2);
+    return;
+  }
+
+  matches.set(matchId, { player1: id1, player2: id2 });
+
+  p1.matchId = matchId;
+  p2.matchId = matchId;
+
+  p1.send(JSON.stringify({ type: 'match_found', matchId, opponent: id2 }));
+  p2.send(JSON.stringify({ type: 'match_found', matchId, opponent: id1 }));
+
+  console.log(`match ${matchId}: ${id1} vs ${id2}`);
 
   const payload = JSON.stringify({
     type: 'question',

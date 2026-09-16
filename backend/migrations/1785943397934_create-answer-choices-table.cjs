@@ -10,12 +10,12 @@ exports.shorthands = undefined;
  */
 exports.up = (pgm) => {
     pgm.createTable('answer_choices', {
-        id: 'id',
-        questionId: {type: 'integer', notNull: true, references: 'questions'},
-        choiceText: {type: 'text', notNull: true},
-        imageUrl: {type: 'text'},
-        isCorrect: {type: 'boolean', notNull: true, default: false},
-        createdAt: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
+                id: 'id',
+        question_id: {type: 'integer', notNull: true, references: 'questions'},
+        choice_text: {type: 'text', notNull: true},
+        image_url: {type: 'text'},
+        is_correct: {type: 'boolean', notNull: true, default: false},
+        created_at: {type: 'timestamp', notNull: true, default: pgm.func('current_timestamp')},
     })
 };
 
