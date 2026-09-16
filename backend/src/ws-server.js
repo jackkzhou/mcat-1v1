@@ -6,28 +6,28 @@ const pool = new Pool({
 });
 
 const WebSocket = require('ws');
-const { randomUUID } = require('node:crypto');        // ← added
+const { randomUUID } = require('node:crypto');
 
 const wss = new WebSocket.Server({ port: 8080 });
 
-const clients = new Map();                             // ← added: id → socket
+const clients = new Map();   // id -> socket
 const waiting = [];
 const matches = new Map();
 
 wss.on('connection', (socket) => {
-  const id = randomUUID();                             // ← added
-  socket.id = id;                                      // ← added
-  clients.set(id, socket);                             // ← added
+  const id = randomUUID();
+  socket.id = id;
+  clients.set(id, socket);
 
-  console.log(`client ${id} connected (${clients.size} total)`);   // ← changed
+  console.log(`client ${id} connected (${clients.size} total)`);
 
   socket.on('error', console.error);
 
   socket.on('close', () => {
-  clients.delete(id);
-  const i = waiting.indexOf(id);
-  if (i !== -1) waiting.splice(i, 1);
-  console.log(`client ${id} disconnected (${clients.size} total)`);
+    clients.delete(id);
+    const i = waiting.indexOf(id);
+    if (i !== -1) waiting.splice(i, 1);
+    console.log(`client ${id} disconnected (${clients.size} total)`);
   });
 
   socket.on('message', (message) => {
@@ -41,57 +41,90 @@ wss.on('connection', (socket) => {
 
     console.log('received:', msg);
 
-    if (msg.type === 'queue'){
-      handleQueue(socket);
+    if (msg.type === 'queue') {
+      handleQueue(socket).catch((err) => {
+        console.error('handleQueue failed:', err);
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
+        }
+      });
     }
 
-    //Add more if statements?
+    // Add more if statements?
   });
 });
 
 
-function handleQueue(socket) {
-  if (socket.matchId) return;   
+async function handleQueue(socket) {
+  if (socket.matchId) return;
   if (waiting.includes(socket.id)) return;
   waiting.push(socket.id);
 
-  if (waiting.length < 2) {
+  const pairs = drainQueue();
+
+  if (waiting.includes(socket.id)) {
     socket.send(JSON.stringify({ type: 'queued' }));
-    return;
   }
 
-  const id1 = waiting.shift();
-  const id2 = waiting.shift();
+  await Promise.all(pairs.map(startMatch));
+}
 
-  const p1 = clients.get(id1);
-  const p2 = clients.get(id2);
+// Pull every viable pair out of the queue. Dead sockets are dropped and the
+// loop keeps going, so a player left over from a half-dead pair gets matched
+// right away instead of sitting there until someone else queues.
+function drainQueue() {
+  const pairs = [];
 
-  const p1Ok = p1 && p1.readyState === WebSocket.OPEN;
-  const p2Ok = p2 && p2.readyState === WebSocket.OPEN;
+  while (waiting.length >= 2) {
+    const id1 = waiting.shift();
+    const p1 = clients.get(id1);
+    if (!p1 || p1.readyState !== WebSocket.OPEN) continue;
 
-  if (!p1Ok || !p2Ok) {
-    if (p1Ok) waiting.unshift(id1);
-    if (p2Ok) waiting.unshift(id2);
-    return;
+    const id2 = waiting.shift();
+    const p2 = clients.get(id2);
+    if (!p2 || p2.readyState !== WebSocket.OPEN) {
+      waiting.unshift(id1);   // id2 is gone, so the queue still shrank
+      continue;
+    }
+
+    pairs.push([id1, p1, id2, p2]);
   }
 
+  return pairs;
+}
+
+async function startMatch([id1, p1, id2, p2]) {
   const matchId = randomUUID();
   matches.set(matchId, { player1: id1, player2: id2 });
 
-  p1.matchId = matchId;        // ← add
-  p2.matchId = matchId;        // ← add
+  p1.matchId = matchId;
+  p2.matchId = matchId;
 
   p1.send(JSON.stringify({ type: 'match_found', matchId, opponent: id2 }));
   p2.send(JSON.stringify({ type: 'match_found', matchId, opponent: id1 }));
 
   console.log(`match ${matchId}: ${id1} vs ${id2}`);
 
-  question = pool.query('SELECT q.id, q.question_text, p.passage_text
-                        FROM questions q
-                        JOIN passages p ON q.passage_id = p.id
-                        ORDER BY random()
-                        LIMIT 1')
-  answers = pool.query(SELECT id, choice_text, is_correct
-                        FROM answer_choices
-                        WHERE question_id = $1)
-  
+  const question = await pool.query(`
+    SELECT q.id, q.question_text, p.passage_text
+    FROM questions q
+    JOIN passages p ON q.passage_id = p.id
+    ORDER BY random()
+    LIMIT 1
+  `);
+  const answers = await pool.query(
+    `SELECT id, choice_text, is_correct
+    FROM answer_choices
+    WHERE question_id = $1`,
+    [question.rows[0].id]
+  );
+
+  const payload = JSON.stringify({
+    type: 'question',
+    question: question.rows[0],
+    choices: answers.rows.map(({ id, choice_text }) => ({ id, choice_text })),
+  });
+
+  p1.send(payload);
+  p2.send(payload);
+}
