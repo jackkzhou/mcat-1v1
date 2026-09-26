@@ -15,8 +15,7 @@ const waiting = [];
 const matches = new Map();
 
 wss.on('connection', (socket) => {
-  const id = randomUUID();
-  socket.id = id;
+  socket.userId = null;
   clients.set(id, socket);
 
   console.log(`client ${id} connected (${clients.size} total)`);

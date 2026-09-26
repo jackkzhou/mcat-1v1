@@ -14,6 +14,22 @@ const app = express();
 app.use(cors());           // ← ADD
 app.use(express.json());
 
+const { verifyToken } = require('./auth');
+
+function authRequired(req, res, next) {
+    const header = req.headers.authorization ?? '';
+    if (!header.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'not authenticated' });
+    }
+
+    const payload = verifyToken(header.slice(7));
+    if (!payload) {
+        return res.status(401).json({ error: 'invalid token' });
+    }
+
+    req.userId = payload.userId;
+    next();
+}
 app.get('/api/passages', async (req, res) => {
     const result = await pool.query('SELECT * FROM passages');
     res.json(result.rows);
@@ -57,6 +73,47 @@ app.post('/api/signup', async(req, res) => {
         throw err;   // anything else bubbles up
     }
 })
+
+app.post('/api/login', async(req,res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ error: 'email and password required' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const result = await pool.query(
+        `SELECT id, username, email, rating, password_hash FROM users WHERE email = $1`,
+        [normalizedEmail]
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+        return res.status(401).json({ error: 'invalid credentials' });
+    
+    }
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) {
+        return res.status(401).json({ error: 'invalid credentials' });
+    }
+    delete user.password_hash;
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+
+    return res.status(200).json({token, user})
+
+})
+
+app.get('/api/me', authRequired, async (req, res) => {
+  const result = await pool.query(
+    `SELECT id, username, email, rating FROM users WHERE id = $1`,
+    [req.userId]
+  );
+  if (!result.rows[0]) return res.status(401).json({ error: 'user no longer exists' });
+  res.json(result.rows[0]);
+});
 
 app.listen(3000, () => {
   console.log('Server running on port 3000');
