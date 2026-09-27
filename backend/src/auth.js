@@ -2,8 +2,9 @@ require('dotenv').config();
 
 const jwt = require('jsonwebtoken');
 
-const JWT_secret = process.env.JWT_secret;
-if (!JWT_SECRET) throw new Error('JWT_SECRET is not set');
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is not set - add it to backend/.env');
 
 function signToken(user) {
     return jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });

@@ -7,6 +7,7 @@ const pool = new Pool({
 
 const WebSocket = require('ws');
 const { randomUUID } = require('node:crypto');
+const { verifyToken } = require('./auth');
 
 const wss = new WebSocket.Server({ port: 8080 });
 
@@ -14,20 +15,27 @@ const clients = new Map();   // id -> socket
 const waiting = [];
 const matches = new Map();
 
+async function handleAuth(socket, msg){
+  const payload = verifyToken(msg.token);
+
+  if (!payload) {
+    socket.send(JSON.stringify({ type: 'auth_failed', message: 'invalid or expired token' }));
+    return;
+  }
+
+  socket.userId = payload.userId;
+  clients.set(payload.userId, socket);
+
+  socket.send(JSON.stringify({ type: 'auth_ok', userId: payload.userId }));
+  console.log(`user ${payload.userId} authenticated (${clients.size} total)`);
+
+}
+
 wss.on('connection', (socket) => {
   socket.userId = null;
-  clients.set(id, socket);
-
-  console.log(`client ${id} connected (${clients.size} total)`);
 
   socket.on('error', console.error);
-
-  socket.on('close', () => {
-    clients.delete(id);
-    const i = waiting.indexOf(id);
-    if (i !== -1) waiting.splice(i, 1);
-    console.log(`client ${id} disconnected (${clients.size} total)`);
-  });
+  socket.on('close', () => handleClose(socket));  
 
   socket.on('message', (message) => {
     let msg;
@@ -38,7 +46,20 @@ wss.on('connection', (socket) => {
       return;
     }
 
-    console.log('received:', msg);
+    if (msg.type === 'auth') {
+      handleAuth(socket, msg).catch((err) => {
+        console.error('handleAuth failed:', err);
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
+        }
+      });
+      return;
+    }
+
+    if (socket.userId === null) {
+      socket.send(JSON.stringify({ type: 'error', message: 'not authenticated' }));
+      return;
+    }
 
     if (msg.type === 'queue') {
       handleQueue(socket).catch((err) => {
@@ -56,12 +77,12 @@ wss.on('connection', (socket) => {
 
 async function handleQueue(socket) {
   if (socket.matchId) return;
-  if (waiting.includes(socket.id)) return;
-  waiting.push(socket.id);
+  if (waiting.includes(socket.userId)) return;
+  waiting.push(socket.userId);
 
   const pairs = drainQueue();
 
-  if (waiting.includes(socket.id)) {
+  if (waiting.includes(socket.userId)) {
     socket.send(JSON.stringify({ type: 'queued' }));
   }
 
@@ -133,4 +154,14 @@ async function startMatch([id1, p1, id2, p2]) {
 
   p1.send(payload);
   p2.send(payload);
+}
+
+function handleClose(socket){
+  const userId = socket.userId;
+  if (userId === null){return};
+  if (clients.get(userId) !== socket) return;   // superseded by a newer socket
+
+  const i = waiting.indexOf(userId);
+  if (i !== -1) waiting.splice(i, 1);
+  console.log(`user ${userId} disconnected (${clients.size} total)`);
 }

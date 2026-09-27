@@ -1,6 +1,5 @@
 require('dotenv').config();
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const cors = require('cors');   // ← ADD
 const express = require('express');
 const { Pool } = require('pg');
@@ -14,7 +13,7 @@ const app = express();
 app.use(cors());           // ← ADD
 app.use(express.json());
 
-const { verifyToken } = require('./auth');
+const { signToken, verifyToken } = require('./auth');
 
 function authRequired(req, res, next) {
     const header = req.headers.authorization ?? '';
@@ -61,7 +60,7 @@ app.post('/api/signup', async(req, res) => {
             [username, normalizedEmail, hash]
         );
         const user = result.rows[0];
-        const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        const token = signToken(user)
         return res.status(201).json({ token, user });
 
         // success path
@@ -99,8 +98,7 @@ app.post('/api/login', async(req,res) => {
         return res.status(401).json({ error: 'invalid credentials' });
     }
     delete user.password_hash;
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
+    const token = signToken(user);
 
     return res.status(200).json({token, user})
 
