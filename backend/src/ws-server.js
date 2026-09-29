@@ -16,39 +16,21 @@ const waiting = [];
 const matches = new Map();
 const userMatch = new Map();   // userId -> matchId
 
-async function handleAuth(socket, msg){
-  const payload = verifyToken(msg.token);
-
-  if (!payload) {
-    socket.send(JSON.stringify({ type: 'auth_failed', message: 'invalid or expired token' }));
-    return;
+setInterval(() => {
+  for (const socket of wss.clients) {
+    if (!socket.isAlive) {
+      socket.terminate();   // fires 'close', so handleClose cleans up as usual
+      continue;
+    }
+    socket.isAlive = false;
+    socket.ping();
   }
-
-  const result = await pool.query('SELECT id, username FROM users WHERE id = $1', [payload.userId]);
-  const user = result.rows[0];
-
-  if (socket.readyState !== WebSocket.OPEN) return;
-
-  if (!user) {
-    socket.send(JSON.stringify({ type: 'auth_failed', message: 'user no longer exists' }));
-    return;
-  }
-
-  const previous = clients.get(user.id);
-  if (previous && previous !== socket) {
-    clients.delete(user.id);
-    previous.close(4001, 'signed in elsewhere');
-  }
-
-  socket.userId = payload.userId;
-  clients.set(payload.userId, socket);
-
-  socket.send(JSON.stringify({ type: 'auth_ok', userId: payload.userId }));
-  console.log(`user ${payload.userId} authenticated (${clients.size} total)`);
-
-}
+}, 30_000);
 
 wss.on('connection', (socket) => {
+
+  socket.isAlive = true;
+  socket.on('pong', () => { socket.isAlive = true; });
   socket.userId = null;
 
   socket.on('error', console.error);
@@ -101,6 +83,41 @@ wss.on('connection', (socket) => {
   });
 });
 
+async function handleAuth(socket, msg){
+  const payload = verifyToken(msg.token);
+
+  if (!payload) {
+    socket.send(JSON.stringify({ type: 'auth_failed', message: 'invalid or expired token' }));
+    return;
+  }
+
+  const result = await pool.query('SELECT id, username FROM users WHERE id = $1', [payload.userId]);
+  const user = result.rows[0];
+
+  if (socket.readyState !== WebSocket.OPEN) return;
+
+  if (!user) {
+    socket.send(JSON.stringify({ type: 'auth_failed', message: 'user no longer exists' }));
+    return;
+  }
+
+  const previous = clients.get(user.id);
+  if (previous && previous !== socket) {
+    clients.delete(user.id);
+    previous.close(4001, 'signed in elsewhere');
+  }
+
+  socket.userId = payload.userId;
+  clients.set(payload.userId, socket);
+
+  socket.send(JSON.stringify({ type: 'auth_ok', userId: payload.userId }));
+  console.log(`user ${payload.userId} authenticated (${clients.size} total)`);
+
+  const match = matches.get(userMatch.get(user.id));
+  if (match && !match.ended) {
+    socket.send(JSON.stringify(matchSnapshot(match, user.id)));
+  }
+}
 
 async function handleQueue(socket) {
   if (userMatch.has(socket.userId)) return;
@@ -195,6 +212,12 @@ function handleClose(socket){
   if (i !== -1) waiting.splice(i, 1);
   clients.delete(userId)
   console.log(`user ${userId} disconnected (${clients.size} total)`);
+
+  const match = matches.get(userMatch.get(userId));        // 1. their match, if any
+  if (match && !match.ended) {
+    const opponentId = match.players.find((id) => id !== userId);   // 2. the other player
+    sendTo(opponentId, { type: 'opponent_disconnected' });          // 3. look up their socket and send
+  }
 }
 
 async function loadPassages() {
@@ -398,4 +421,18 @@ async function saveResult({ id1, id2, score1, score2, reason }) {
   } finally {
     client.release();
   }
+}
+
+function matchSnapshot(match, userId) {
+  const opponentId = match.players.find((id) => id !== userId);
+  return {
+    type: 'match_resume',
+    matchId: match.id,
+    opponent: opponentId,
+    passages: match.passages,
+    selections: match.selections[userId],            // only THEIR picks
+    submitted: Boolean(match.submitted[userId]),
+    opponentSubmitted: Boolean(match.submitted[opponentId]),
+    deadlineAt: match.deadlineAt ?? null,            // null if no one has submitted yet
+  };
 }
