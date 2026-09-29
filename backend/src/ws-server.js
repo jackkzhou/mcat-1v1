@@ -93,7 +93,11 @@ wss.on('connection', (socket) => {
       return;
     }
 
-    // Add more if statements?
+    if (msg.type === 'submit'){
+      handleSubmit(socket, msg);
+      return;
+    }
+
   });
 });
 
@@ -172,6 +176,11 @@ async function startMatch([id1, p1, id2, p2]) {
     submitted:  { [id1]: null, [id2]: null },
     ended: false,
   });
+
+  matches.get(matchId).capTimer = setTimeout(
+    () => endMatch(matchId, 'cap'),
+    15 * 60 * 1000
+  );
 
   p1.send(JSON.stringify({ type: 'match_start', matchId, opponent: id2, passages }));
   p2.send(JSON.stringify({ type: 'match_start', matchId, opponent: id1, passages }));
@@ -275,4 +284,118 @@ function handleSelect(socket,msg){
 
   match.selections[socket.userId][msg.questionId] = msg.choiceId;
 
+}
+
+function handleSubmit(socket,msg){
+  const match = matches.get(userMatch.get(socket.userId));
+  if (!match || match.ended){
+    socket.send(JSON.stringify({type: 'error', message: 'not in a match'}));
+    return;
+  }
+
+  if (match.submitted[socket.userId]){
+    socket.send(JSON.stringify({type: 'error', message: 'already submitted'}));
+    return;
+  }
+
+  match.submitted[socket.userId] = Date.now();
+
+  const opponentId = match.players.find((id) => id !== socket.userId);
+
+  if (match.submitted[opponentId]) {
+    endMatch(match.id, 'both_submitted');
+    return;
+  }
+
+  match.deadlineAt = Date.now() + 30_000;
+  match.deadlineTimer = setTimeout(() => endMatch(match.id, 'deadline'), 30_000);
+
+  socket.send(JSON.stringify({ type: 'submitted', deadlineAt: match.deadlineAt }));
+
+  const opponentSocket = clients.get(opponentId);
+  if (opponentSocket && opponentSocket.readyState === WebSocket.OPEN) {
+    opponentSocket.send(JSON.stringify({ type: 'opponent_submitted', deadlineAt: match.deadlineAt }));
+  }
+}
+
+function endMatch(matchId, reason){
+  const match = matches.get(matchId);
+  if (!match || match.ended) return;
+
+  match.ended = true;
+  clearTimeout(match.deadlineTimer);
+  clearTimeout(match.capTimer);
+
+  const [id1, id2] = match.players;
+  const score1 = scoreFor(match, id1);
+  const score2 = scoreFor(match, id2);
+
+  let result1, result2;
+  if (score1 > score2)      { result1 = 'win';  result2 = 'loss'; }
+  else if (score2 > score1) { result1 = 'loss'; result2 = 'win';  }
+  else                      { result1 = 'draw'; result2 = 'draw'; }
+
+  const total = Object.keys(match.correctAnswers).length;
+
+  sendTo(id1, { type: 'match_end', reason, result: result1,
+                yourScore: score1, opponentScore: score2, total,
+                correctAnswers: match.correctAnswers });
+
+  sendTo(id2, { type: 'match_end', reason, result: result2,
+                yourScore: score2, opponentScore: score1, total,
+                correctAnswers: match.correctAnswers });
+
+  saveResult({ id1, id2, score1, score2, reason }).catch((err) =>
+    console.error(`failed to save match ${matchId}:`, err)
+  );
+  matches.delete(matchId);
+  userMatch.delete(id1);
+  userMatch.delete(id2);
+}
+
+function scoreFor(match, userId) {
+  const picks = match.selections[userId];
+  let score = 0;
+  for (const questionId in picks) {
+    if (picks[questionId] === match.correctAnswers[questionId]) score++;
+  }
+  return score;
+}
+
+function sendTo(userId, payload) {
+  const socket = clients.get(userId);
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(payload));
+  }
+}
+
+async function saveResult({ id1, id2, score1, score2, reason }) {
+  let winnerId = null;
+  let delta1 = 0;
+  let delta2 = 0;
+  const RATING_CHANGE = 15;
+
+
+  if (score1 > score2)      { winnerId = id1; delta1 = RATING_CHANGE;  delta2 = -RATING_CHANGE; }
+  else if (score2 > score1) { winnerId = id2; delta1 = -RATING_CHANGE; delta2 = RATING_CHANGE;  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `INSERT INTO matches (player1_id, player2_id, winner_id, player1_score, player2_score, ended_reason)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id1, id2, winnerId, score1, score2, reason]
+    );
+    await client.query('UPDATE users SET rating = rating + $1 WHERE id = $2', [delta1, id1]);
+    await client.query('UPDATE users SET rating = rating + $1 WHERE id = $2', [delta2, id2]);
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
