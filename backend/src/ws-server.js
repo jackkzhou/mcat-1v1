@@ -85,6 +85,12 @@ wss.on('connection', (socket) => {
           socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
         }
       });
+      return;
+    }
+
+    if (msg.type === 'select') {
+      handleSelect(socket, msg);
+      return;
     }
 
     // Add more if statements?
@@ -244,4 +250,29 @@ async function loadPassages() {
   return { passages, correctAnswers };
 
   
+}
+
+
+function handleSelect(socket,msg){
+
+  const match = matches.get(userMatch.get(socket.userId));
+  if (!match || match.ended) {
+    socket.send(JSON.stringify({ type: 'error', message: 'not in a match' }));
+    return;
+  }
+
+  if (match.submitted[socket.userId]) {
+    socket.send(JSON.stringify({ type: 'error', message: 'already submitted' }));
+    return;
+  }
+  
+  const question = match.passages.flatMap((p) => p.questions).find((q) => q.id === msg.questionId);
+
+  if (!question || !question.choices.some((c) => c.id === msg.choiceId)) {
+    socket.send(JSON.stringify({ type: 'error', message: 'invalid selection' }));
+    return;
+  }
+
+  match.selections[socket.userId][msg.questionId] = msg.choiceId;
+
 }
