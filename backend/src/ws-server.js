@@ -175,6 +175,9 @@ async function startMatch([id1, p1, id2, p2]) {
   } catch (err) {
     userMatch.delete(id1);
     userMatch.delete(id2);
+    sendTo(id1, { type: 'match_failed' });
+    sendTo(id2, { type: 'match_failed' });
+
     throw err;                       // still reaches handleQueue's .catch and gets logged
   }
 
