@@ -116,6 +116,10 @@ async function handleAuth(socket, msg){
   const match = matches.get(userMatch.get(user.id));
   if (match && !match.ended) {
     socket.send(JSON.stringify(matchSnapshot(match, user.id)));
+
+    const opponentId = match.players.find((id) => id !== user.id);
+    sendTo(opponentId, { type: 'opponent_reconnected' });
+
   }
 }
 
