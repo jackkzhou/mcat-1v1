@@ -1,3 +1,5 @@
+import Login from './screens/login';
+
 export default function App() {
-  return <h1>MCAT 1v1</h1>;
+  return <Login onLoggedIn={(user, token) => console.log('logged in!', user, token)} />
 }
