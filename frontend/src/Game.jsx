@@ -2,8 +2,10 @@ import { useEffect } from 'react';
 import { useGameSocket } from './useGameSocket';
 import Lobby from './screens/Lobby';
 import Match from './screens/Match';                              // NEW
+import Results from './screens/Results';
 
-export default function Game({ token, user, onLogout }) {
+
+export default function Game({ token, user, onLogout, onRefreshUser }) {
   const { state, send, select, backToLobby } = useGameSocket(token);   // NEW: select, backToLobby
 
   // bad token on the socket → log out
@@ -36,16 +38,14 @@ export default function Game({ token, user, onLogout }) {
         />
       );
 
-    case 'results': {                                              // NEW: simple results (full version is Step 6)
-      const r = state.result;
+    case 'results':
       return (
-        <div>
-          <h1>{r.result === 'win' ? 'You won!' : r.result === 'loss' ? 'You lost' : 'Draw'}</h1>
-          <p>You {r.yourScore}/{r.total} — Opponent {r.opponentScore}/{r.total}</p>
-          <button onClick={backToLobby}>Back to lobby</button>
-        </div>
+        <Results
+          result={state.result}
+          match={state.match}
+          onBack={() => { backToLobby(); onRefreshUser(); }}
+        />
       );
-    }
 
     case 'disconnected':
       return (
