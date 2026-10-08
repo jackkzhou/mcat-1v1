@@ -1,87 +1,15 @@
-require('dotenv').config();
-
-const { Pool } = require('pg');
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+const pool = require('./db');
 
 const WebSocket = require('ws');
 const { randomUUID } = require('node:crypto');
 const { verifyToken } = require('./auth');
 
-const wss = new WebSocket.Server({ port: 8080 });
 
 const clients = new Map();   // id -> socket
 const waiting = [];
 const matches = new Map();
 const userMatch = new Map();   // userId -> matchId
 
-setInterval(() => {
-  for (const socket of wss.clients) {
-    if (!socket.isAlive) {
-      socket.terminate();   // fires 'close', so handleClose cleans up as usual
-      continue;
-    }
-    socket.isAlive = false;
-    socket.ping();
-  }
-}, 30_000);
-
-wss.on('connection', (socket) => {
-
-  socket.isAlive = true;
-  socket.on('pong', () => { socket.isAlive = true; });
-  socket.userId = null;
-
-  socket.on('error', console.error);
-  socket.on('close', () => handleClose(socket));  
-
-  socket.on('message', (message) => {
-    let msg;
-    try {
-      msg = JSON.parse(message);
-    } catch {
-      socket.send(JSON.stringify({ type: 'error', message: 'invalid JSON' }));
-      return;
-    }
-
-    if (msg.type === 'auth') {
-      handleAuth(socket, msg).catch((err) => {
-        console.error('handleAuth failed:', err);
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
-        }
-      });
-      return;
-    }
-
-    if (socket.userId === null) {
-      socket.send(JSON.stringify({ type: 'error', message: 'not authenticated' }));
-      return;
-    }
-
-    if (msg.type === 'queue') {
-      handleQueue(socket).catch((err) => {
-        console.error('handleQueue failed:', err);
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
-        }
-      });
-      return;
-    }
-
-    if (msg.type === 'select') {
-      handleSelect(socket, msg);
-      return;
-    }
-
-    if (msg.type === 'submit'){
-      handleSubmit(socket, msg);
-      return;
-    }
-
-  });
-});
 
 async function handleAuth(socket, msg){
   const payload = verifyToken(msg.token);
@@ -479,3 +407,79 @@ function matchSnapshot(match, userId) {
     deadlineAt: match.deadlineAt ?? null,            // null if no one has submitted yet
   };
 }
+
+function attachWebSocket(server) {
+  const wss = new WebSocket.Server({ server, path: '/ws' });
+
+  // Heartbeat: ping every 30s, drop sockets that didn't answer the last ping
+  setInterval(() => {
+    for (const socket of wss.clients) {
+      if (!socket.isAlive) {
+        socket.terminate();   // fires 'close', so handleClose cleans up as usual
+        continue;
+      }
+      socket.isAlive = false;
+      socket.ping();
+    }
+  }, 30_000);
+
+  wss.on('connection', (socket) => {
+
+    socket.isAlive = true;
+    socket.on('pong', () => { socket.isAlive = true; });
+    socket.userId = null;
+
+    socket.on('error', console.error);
+    socket.on('close', () => handleClose(socket));  
+
+    socket.on('message', (message) => {
+      let msg;
+      try {
+        msg = JSON.parse(message);
+      } catch {
+        socket.send(JSON.stringify({ type: 'error', message: 'invalid JSON' }));
+        return;
+      }
+
+      if (msg.type === 'auth') {
+        handleAuth(socket, msg).catch((err) => {
+          console.error('handleAuth failed:', err);
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
+          }
+        });
+        return;
+      }
+
+      if (socket.userId === null) {
+        socket.send(JSON.stringify({ type: 'error', message: 'not authenticated' }));
+        return;
+      }
+
+      if (msg.type === 'queue') {
+        handleQueue(socket).catch((err) => {
+          console.error('handleQueue failed:', err);
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'error', message: 'server error' }));
+          }
+        });
+        return;
+      }
+
+      if (msg.type === 'select') {
+        handleSelect(socket, msg);
+        return;
+      }
+
+      if (msg.type === 'submit'){
+        handleSubmit(socket, msg);
+        return;
+      }
+
+    });
+  });
+
+  return wss;
+}
+
+module.exports = { attachWebSocket };
