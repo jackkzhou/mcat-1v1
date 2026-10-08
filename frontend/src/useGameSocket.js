@@ -28,5 +28,12 @@ export function useGameSocket(token) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
 
-  return { state, send };
+    const select = useCallback((questionId, choiceId) => {
+    dispatch({ type: 'local_select', questionId, choiceId });   // update the screen now
+    send({ type: 'select', questionId, choiceId });             // tell the server (no reply comes)
+  }, [send]);
+
+  const backToLobby = useCallback(() => dispatch({ type: 'back_to_lobby' }), []);
+
+  return { state, send, select, backToLobby };
 }

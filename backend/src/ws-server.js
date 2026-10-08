@@ -108,6 +108,7 @@ async function handleAuth(socket, msg){
   }
 
   socket.userId = payload.userId;
+  socket.username = user.username;   // FIX 1: kept so startMatch can tell each player who they're facing
   clients.set(payload.userId, socket);
 
   socket.send(JSON.stringify({ type: 'auth_ok', userId: payload.userId }));
@@ -145,23 +146,23 @@ function drainQueue() {
 
   while (waiting.length >= 2) {
     const id1 = waiting.shift();
-    const p1 = clients.get(id1);
-    if (!p1 || p1.readyState !== WebSocket.OPEN) continue;
+    if (!isOnline(id1)) continue;
 
     const id2 = waiting.shift();
-    const p2 = clients.get(id2);
-    if (!p2 || p2.readyState !== WebSocket.OPEN) {
+    if (!isOnline(id2)) {
       waiting.unshift(id1);   // id2 is gone, so the queue still shrank
       continue;
     }
 
-    pairs.push([id1, p1, id2, p2]);
+    // FIX 3: pairs hold user ids only. Sockets are looked up again
+    // after any await, because a player may have reconnected meanwhile.
+    pairs.push([id1, id2]);
   }
 
   return pairs;
 }
 
-async function startMatch([id1, p1, id2, p2]) {
+async function startMatch([id1, id2]) {
   const matchId = randomUUID();
 
   // Reserve both players BEFORE any await, so a second 'queue' message
@@ -181,19 +182,33 @@ async function startMatch([id1, p1, id2, p2]) {
     throw err;                       // still reaches handleQueue's .catch and gets logged
   }
 
-  if (p1.readyState !== WebSocket.OPEN || p2.readyState !== WebSocket.OPEN) {
+  // FIX 3: check each user's CURRENT socket, not the one we had before the await.
+  // A player who refreshed during loadPassages is still online on a new socket.
+  if (!isOnline(id1) || !isOnline(id2)) {
     userMatch.delete(id1);
     userMatch.delete(id2);
-    if (p1.readyState === WebSocket.OPEN) waiting.unshift(id1);
-    if (p2.readyState === WebSocket.OPEN) waiting.unshift(id2);
+    if (isOnline(id1)) waiting.unshift(id1);
+    if (isOnline(id2)) waiting.unshift(id2);
+
+    // Whoever went back in the queue may be able to pair with someone already waiting
+    const pairs = drainQueue();
+    await Promise.all(pairs.map(startMatch));
     return;
   }
 
   const { passages, correctAnswers } = loaded;
 
+  // FIX 1: copy usernames into the match, so a snapshot sent on reconnect
+  // still has the opponent's name even if the opponent is offline right then.
+  const usernames = {
+    [id1]: clients.get(id1).username,
+    [id2]: clients.get(id2).username,
+  };
+
   matches.set(matchId, {
     id: matchId,
     players: [id1, id2],
+    usernames,
     passages,
     correctAnswers,
     selections: { [id1]: {}, [id2]: {} },
@@ -206,8 +221,9 @@ async function startMatch([id1, p1, id2, p2]) {
     15 * 60 * 1000
   );
 
-  p1.send(JSON.stringify({ type: 'match_start', matchId, opponent: id2, passages }));
-  p2.send(JSON.stringify({ type: 'match_start', matchId, opponent: id1, passages }));
+  // FIX 1 + 3: send to each user's current socket, with the opponent as { id, username }
+  sendTo(id1, { type: 'match_start', matchId, opponent: { id: id2, username: usernames[id2] }, passages });
+  sendTo(id2, { type: 'match_start', matchId, opponent: { id: id1, username: usernames[id1] }, passages });
 }
 
 function handleClose(socket){
@@ -280,9 +296,13 @@ async function loadPassages() {
         id: q.id,
         question_text: q.question_text,
         image_url: q.image_url,
-        choices: choiceRows
-          .filter((c) => c.question_id === q.id)
-          .map((c) => ({ id: c.id, choice_text: c.choice_text, image_url: c.image_url })),
+        // FIX 2: shuffle so the correct answer isn't always first.
+        // Scoring compares choice ids, not positions, so order doesn't affect it.
+        choices: shuffle(
+          choiceRows
+            .filter((c) => c.question_id === q.id)
+            .map((c) => ({ id: c.id, choice_text: c.choice_text, image_url: c.image_url }))
+        ),
       })),
   }));
 
@@ -399,6 +419,22 @@ function sendTo(userId, payload) {
   }
 }
 
+// FIX 3: "is this user connected right now?" — always checks their current socket
+function isOnline(userId) {
+  const socket = clients.get(userId);
+  return socket !== undefined && socket.readyState === WebSocket.OPEN;
+}
+
+// FIX 2: Fisher–Yates shuffle, in place. Every order is equally likely.
+// (arr.sort(() => Math.random() - 0.5) looks similar but is biased.)
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));   // random index in 0..i
+    [arr[i], arr[j]] = [arr[j], arr[i]];             // swap
+  }
+  return arr;
+}
+
 async function saveResult({ id1, id2, score1, score2, reason }) {
   let winnerId = null;
   let delta1 = 0;
@@ -435,7 +471,7 @@ function matchSnapshot(match, userId) {
   return {
     type: 'match_resume',
     matchId: match.id,
-    opponent: opponentId,
+    opponent: { id: opponentId, username: match.usernames[opponentId] },   // FIX 1
     passages: match.passages,
     selections: match.selections[userId],            // only THEIR picks
     submitted: Boolean(match.submitted[userId]),
